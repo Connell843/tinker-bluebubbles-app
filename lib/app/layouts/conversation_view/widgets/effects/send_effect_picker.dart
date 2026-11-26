@@ -38,10 +38,15 @@ void sendEffectAction(
   int? part,
   String? chatGuid,
   Future<void> Function({String? effect}) sendMessage,
-  List<Run> textRuns,
-) {
-  if (!SettingsSvc.settings.enablePrivateAPI.value) return;
-  String typeSelected = "bubble";
+  List<Run> textRuns, {
+  required Future<void> Function(DateTime date) scheduleMessage,
+  required String? Function() scheduleBlockReason,
+}) {
+  // Effects need the Private API; scheduling only needs the server, so without it the sheet opens on Schedule alone
+  final effectsAvailable = SettingsSvc.settings.enablePrivateAPI.value;
+  String typeSelected = effectsAvailable ? "bubble" : "schedule";
+  SchedulePreset? presetSelected = SchedulePreset.oneHour;
+  DateTime? customDate;
   final bubbleEffects = ["slam", "loud", "gentle", "invisible ink"];
   final screenEffects = ["echo", "spotlight", "balloons", "confetti", "love", "lasers", "fireworks", "celebration"];
   String bubbleSelected = "slam";
@@ -61,7 +66,7 @@ void sendEffectAction(
     subject: subjectText,
     threadOriginatorGuid: threadOriginatorGuid,
     threadOriginatorPart: "${part ?? 0}:0:0",
-    expressiveSendStyleId: effectMap["slam"],
+    expressiveSendStyleId: effectsAvailable ? effectMap["slam"] : null,
     dateCreated: DateTime.now(),
     hasAttachments: false,
     isFromMe: true,
@@ -145,30 +150,37 @@ void sendEffectAction(
                             child: Center(
                                 child: Column(children: [
                               Text(
-                                "Send with effect",
+                                typeSelected == "schedule" ? "Schedule message" : "Send with effect",
                                 style: context.theme.textTheme.headlineSmall!,
                               ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 20.0),
-                                child: SizedBox(
-                                  height: 50,
-                                  width: NavigationSvc.width(context) / 2,
-                                  child: CupertinoSlidingSegmentedControl<String>(
-                                    children: {
-                                      "bubble": const Text("Bubble"),
-                                      "screen": const Text("Screen"),
-                                    },
-                                    groupValue: typeSelected,
-                                    thumbColor: CupertinoColors.tertiarySystemFill.oppositeLightenOrDarken(20),
-                                    backgroundColor: CupertinoColors.tertiarySystemFill,
-                                    onValueChanged: (str) {
-                                      setState(() {
-                                        typeSelected = str ?? "bubble";
-                                      });
-                                    },
+                              if (effectsAvailable)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 20.0),
+                                  child: SizedBox(
+                                    height: 50,
+                                    width: min(NavigationSvc.width(context) - 40, 420),
+                                    child: CupertinoSlidingSegmentedControl<String>(
+                                      children: {
+                                        "bubble": const Text("Bubble"),
+                                        "screen": const Text("Screen"),
+                                        "schedule": const Text("Schedule"),
+                                      },
+                                      groupValue: typeSelected,
+                                      thumbColor: CupertinoColors.tertiarySystemFill.oppositeLightenOrDarken(20),
+                                      backgroundColor: CupertinoColors.tertiarySystemFill,
+                                      onValueChanged: (str) {
+                                        setState(() {
+                                          typeSelected = str ?? "bubble";
+                                          // A scheduled message goes out plain, so the preview drops the bubble effect
+                                          message.expressiveSendStyleId =
+                                              typeSelected == "schedule" ? null : effectMap[bubbleSelected];
+                                        });
+                                      },
+                                    ),
                                   ),
-                                ),
-                              ),
+                                )
+                              else
+                                const SizedBox(height: 20),
                               const Spacer(),
                               if (typeSelected == "bubble")
                                 Padding(
@@ -321,6 +333,24 @@ void sendEffectAction(
                                         ),
                                       )),
                                 ),
+                              if (typeSelected == "schedule")
+                                _SchedulePanel(
+                                  presetSelected: presetSelected,
+                                  customDate: customDate,
+                                  blockReason: scheduleBlockReason() ?? (text.isEmpty ? _emptyScheduleReason : null),
+                                  onPresetSelected: (preset) {
+                                    setState(() {
+                                      presetSelected = preset;
+                                      customDate = null;
+                                    });
+                                  },
+                                  onCustomDatePicked: (date) {
+                                    setState(() {
+                                      presetSelected = null;
+                                      customDate = date;
+                                    });
+                                  },
+                                ),
                               const Spacer(),
                               if (text.isNotEmpty || subjectText.isNotEmpty)
                                 Theme(
@@ -418,18 +448,47 @@ void sendEffectAction(
                                   }),
                                 ),
                               const Spacer(),
-                              TextButton(
-                                child: Text(
-                                  typeSelected == "bubble" ? "Send with $bubbleSelected" : "Send with $screenSelected",
-                                  style: context.theme.textTheme.titleLarge!
-                                      .apply(color: context.theme.colorScheme.primary),
+                              if (typeSelected == "schedule")
+                                TextButton(
+                                  child: Text(
+                                    "Schedule for ${scheduleTimeLabel(customDate ?? presetSelected!.resolve())}",
+                                    style: context.theme.textTheme.titleLarge!
+                                        .apply(color: context.theme.colorScheme.primary),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  // Never disabled: a disabled button lets the tap through to the backdrop, which closes
+                                  // the sheet, so a blocked schedule says why instead
+                                  onPressed: () async {
+                                    final blocked =
+                                        scheduleBlockReason() ?? (text.isEmpty ? _emptyScheduleReason : null);
+                                    if (blocked != null) {
+                                      return showSnackbar("Error", blocked, type: SnackbarType.error);
+                                    }
+                                    // A preset counts from now, not from when it was picked
+                                    final date = customDate ?? presetSelected!.resolve();
+                                    if (!date.isAfter(DateTime.now())) {
+                                      return showSnackbar("Error", "Pick a time in the future!",
+                                          type: SnackbarType.error);
+                                    }
+                                    Navigator.of(context).pop();
+                                    await scheduleMessage(date);
+                                  },
+                                )
+                              else
+                                TextButton(
+                                  child: Text(
+                                    typeSelected == "bubble"
+                                        ? "Send with $bubbleSelected"
+                                        : "Send with $screenSelected",
+                                    style: context.theme.textTheme.titleLarge!
+                                        .apply(color: context.theme.colorScheme.primary),
+                                  ),
+                                  onPressed: () async {
+                                    Navigator.of(context).pop();
+                                    await sendMessage(
+                                        effect: effectMap[typeSelected == "bubble" ? bubbleSelected : screenSelected]);
+                                  },
                                 ),
-                                onPressed: () async {
-                                  Navigator.of(context).pop();
-                                  await sendMessage(
-                                      effect: effectMap[typeSelected == "bubble" ? bubbleSelected : screenSelected]);
-                                },
-                              ),
                             ])),
                           ),
                         ),
@@ -446,4 +505,164 @@ void sendEffectAction(
       opaque: false,
     ),
   );
+}
+
+const _emptyScheduleReason = "Type a message to schedule!";
+
+/// "Today, 3:42 PM", "Tomorrow, 9:13 AM", or the full date further out.
+String scheduleTimeLabel(DateTime date) {
+  final now = DateTime.now();
+  final tomorrow = DateTime(now.year, now.month, now.day + 1);
+  if (date.isToday()) return "Today, ${buildTime(date)}";
+  if (date.year == tomorrow.year && date.month == tomorrow.month && date.day == tomorrow.day) {
+    return "Tomorrow, ${buildTime(date)}";
+  }
+  return buildFullDate(date, useTodayYesterday: false);
+}
+
+/// The Schedule tab of the send sheet: quick picks for an hour or a few out and the next 9:13 AM, plus an exact
+/// date and time from a calendar. It only picks the time; the sheet's button schedules the message.
+class _SchedulePanel extends StatelessWidget {
+  const _SchedulePanel({
+    required this.presetSelected,
+    required this.customDate,
+    required this.blockReason,
+    required this.onPresetSelected,
+    required this.onCustomDatePicked,
+  });
+
+  final SchedulePreset? presetSelected;
+  final DateTime? customDate;
+  final String? blockReason;
+  final void Function(SchedulePreset preset) onPresetSelected;
+  final void Function(DateTime date) onCustomDatePicked;
+
+  Future<void> _pickCustomDate(BuildContext context) async {
+    final now = DateTime.now();
+    final initial = customDate ?? now.add(const Duration(hours: 1));
+    final day = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 365)),
+      initialEntryMode: kIsDesktop ? DatePickerEntryMode.input : DatePickerEntryMode.calendar,
+    );
+    if (day == null || !context.mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      initialEntryMode: kIsDesktop ? TimePickerEntryMode.input : TimePickerEntryMode.dial,
+    );
+    if (time == null) return;
+
+    final date = DateTime(day.year, day.month, day.day, time.hour, time.minute);
+    if (!date.isAfter(DateTime.now())) {
+      return showSnackbar("Invalid Date Selection", "Please select a time in the future", type: SnackbarType.error);
+    }
+    onCustomDatePicked(date);
+  }
+
+  Widget _tile(BuildContext context, {
+    required String label,
+    required String detail,
+    required bool selected,
+    required IconData icon,
+    required VoidCallback onTap,
+    required double width,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: width,
+          constraints: const BoxConstraints(minHeight: 60),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: CupertinoColors.tertiarySystemFill,
+            border: Border.fromBorderSide(selected
+                ? BorderSide(color: context.theme.colorScheme.primary, width: 1.5, style: BorderStyle.solid)
+                : BorderSide.none),
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: context.theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(label.toUpperCase(), textAlign: TextAlign.center),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      textAlign: TextAlign.center,
+                      style: context.theme.textTheme.bodySmall!
+                          .copyWith(color: context.theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = NavigationSvc.width(context);
+    // Two tiles a row on a phone; capped so they don't stretch across a desktop window
+    final tileWidth = min(width / 2 - 24, 200.0);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20.0),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: 350, maxWidth: width),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (blockReason != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Text(
+                    blockReason!,
+                    textAlign: TextAlign.center,
+                    style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.error),
+                  ),
+                ),
+              Wrap(
+                alignment: WrapAlignment.center,
+                children: [
+                  for (final preset in SchedulePreset.values)
+                    _tile(
+                      context,
+                      label: preset.label,
+                      detail: scheduleTimeLabel(preset.resolve()),
+                      selected: presetSelected == preset,
+                      icon: preset == SchedulePreset.nextMorning ? Icons.wb_sunny_outlined : Icons.schedule,
+                      onTap: () => onPresetSelected(preset),
+                      width: tileWidth,
+                    ),
+                  _tile(
+                    context,
+                    label: "Pick date & time",
+                    detail: customDate != null ? scheduleTimeLabel(customDate!) : "Choose from a calendar",
+                    selected: customDate != null,
+                    icon: Icons.edit_calendar_outlined,
+                    onTap: () => _pickCustomDate(context),
+                    width: tileWidth * 2 + 16,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

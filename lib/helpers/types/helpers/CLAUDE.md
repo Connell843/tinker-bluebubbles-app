@@ -8,6 +8,7 @@ Pure functions, no state or service dependencies.
 |------|---------------|
 | `string_helpers.dart` | `randomString(n)` — generates n-char alphanumeric string (used for tempGuids); `sanitizeString()` strips U+FFFC; `sanitizeFileName()` / `hasReservedFileNameChars()` — make a foreign string safe as a file name (always run IDs/names through this before building a path); `isNullOrEmptyString()`; `parseLinks()` — extracts URLs via regex |
 | `date_helpers.dart` | `buildDate(DateTime, {forceYearWhenOlderThan})` — human-relative timestamps ("Just Now", "5 min", "Yesterday", "Mon 4:30") respecting 24-hour setting and chat skin |
+| `schedule_helpers.dart` | `SchedulePreset` (the send sheet's Schedule tab quick picks: in 1/2/3 hours, next 9:13 AM; `resolve()` counts from the moment it's used) and `nextTimeOfDay(hour, minute)`; unit-tested in `test/helpers/schedule_helpers_test.dart` |
 | `message_helper.dart` | `MessageHelper.bulkAddMessages()` — offloads bulk message insertion to isolate via `MessageInterface`; reports progress via callback |
 | `contact_helpers.dart` | Phone number formatting via `dlibphonenumber`; locale-aware country codes; email detection |
 | `pin_order_helpers.dart` | Pin ordering rules over guids/indexes/dates: `mergePinOrder()` (a reordered visible subset back into the full order), `comparePinOrder()` (sort key used by `ChatsService`), `migratePinIndexes()` (the v11 migration); unit-tested in `test/helpers/pin_order_helpers_test.dart` |

@@ -22,6 +22,7 @@ import 'package:bluebubbles/services/ui/chat/send_data.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart' as dio;
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' hide context;
@@ -319,15 +320,20 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
           );
         },
       );
-      final response = await HttpSvc.message.createScheduled(chat.guid, text, date.toUtc(), {"type": "once"});
-      Navigator.of(context).pop();
-      if (response.statusCode == 200 && response.data != null) {
-        showSnackbar("Notice", "Message scheduled successfully for ${buildFullDate(date)}");
-      } else {
-        Logger.error("Scheduled message error: ${response.statusCode}");
-        Logger.error(response.data);
-        showSnackbar("Error", "Something went wrong!", type: SnackbarType.error);
+      dio.Response? response;
+      try {
+        response = await HttpSvc.message.createScheduled(chat.guid, text, date.toUtc(), {"type": "once"});
+      } catch (e, s) {
+        Logger.error("Failed to schedule message", error: e, trace: s);
       }
+      if (mounted) Navigator.of(context).pop();
+      if (response?.statusCode != 200 || response?.data == null) {
+        Logger.error("Scheduled message error: ${response?.statusCode}");
+        if (response != null) Logger.error(response.data);
+        // Keep the text and the picked time, so the send button can try again
+        return showSnackbar("Error", "Something went wrong!", type: SnackbarType.error);
+      }
+      showSnackbar("Notice", "Message scheduled successfully for ${buildFullDate(date)}");
     } else {
       if (text.isEmpty &&
           controller.subjectTextController.text.isEmpty &&

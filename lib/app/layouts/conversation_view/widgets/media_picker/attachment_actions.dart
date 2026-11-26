@@ -169,12 +169,24 @@ class AttachmentActions {
 
   static Future<void> shareLocation(ConversationViewController controller) => Share.location(controller.chat);
 
-  static Future<void> schedule(BuildContext context, ConversationViewController controller) async {
-    if (controller.pickedAttachments.isNotEmpty) {
-      return showSnackbar("Error", "Remove all attachments before scheduling!", type: SnackbarType.error);
-    } else if (controller.replyToMessage != null || controller.subjectTextController.text.isNotEmpty) {
-      return showSnackbar("Error", "Private API features are not supported when scheduling!", type: SnackbarType.error);
+  /// Why the composer's contents can't be scheduled, or null when they can. The server sends a scheduled
+  /// message as plain text to the chat, so anything beyond that would be dropped.
+  static String? scheduleBlockReason(ConversationViewController controller) {
+    if (controller.pickedAttachments.isNotEmpty) return "Remove all attachments before scheduling!";
+    if (controller.pendingGame.value != null) return "Games can't be scheduled!";
+    if (controller.replyToMessage != null || controller.subjectTextController.text.isNotEmpty) {
+      return "Private API features are not supported when scheduling!";
     }
+    if (controller.textController.mentionRuns.isNotEmpty) return "Mentions are not allowed in scheduled messages!";
+    if (controller.textController.sendableRuns.isNotEmpty) {
+      return "Formatting is not allowed in scheduled messages!";
+    }
+    return null;
+  }
+
+  static Future<void> schedule(BuildContext context, ConversationViewController controller) async {
+    final blocked = scheduleBlockReason(controller);
+    if (blocked != null) return showSnackbar("Error", blocked, type: SnackbarType.error);
 
     final date = await showTimeframePicker("Pick date and time", context, presetsAhead: true);
     if (date != null && date.isAfter(DateTime.now())) {
