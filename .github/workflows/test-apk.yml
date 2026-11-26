@@ -67,6 +67,7 @@ jobs:
           fvm-version: ${{ env.FVM_VERSION }}
 
       - name: Restore Gradle cache
+        id: cache-gradle
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -91,8 +92,38 @@ jobs:
         run: 'echo "KLIPY_API_KEY=" > .env'
 
       # No android/key.properties, so build.gradle signs the alpha flavor with the debug key.
+      #
+      # Maven Central answers shared runners with 429 Too Many Requests at times, worst on a
+      # cold Gradle cache, and flutter's own retry comes too soon to get past it. So a failed
+      # download is retried after a wait; any other failure stops at once.
       - name: Build APK (alpha)
-        run: fvm flutter build apk --release --flavor alpha --no-pub
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3; do
+            if fvm flutter build apk --release --flavor alpha --no-pub 2>&1 | tee build.log; then
+              exit 0
+            fi
+            if ! grep -q -e "status code 429" -e "error while downloading artifacts from the network" build.log; then
+              exit 1
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              wait=$((attempt * 120))
+              echo "::warning::Attempt $attempt failed downloading build dependencies; retrying in ${wait}s"
+              sleep "$wait"
+            fi
+          done
+          exit 1
+
+      # Unlike pr-check, which only saves master's, this keeps the branch's own copy: without
+      # it every build re-downloads everything, which is what draws the 429s above.
+      - name: Save Gradle cache
+        if: steps.cache-gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.cache-gradle.outputs.cache-primary-key }}
 
       # Saved right after the build that created it, so later runs sign with the same key.
       - name: Save debug signing key
