@@ -1,6 +1,7 @@
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/effects/send_effect_picker.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/media_picker/attachment_actions.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/audio_player.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/send_button.dart';
 import 'package:bluebubbles/app/wrappers/cupertino_icon_wrapper.dart';
@@ -146,6 +147,12 @@ class _TextFieldSuffixState extends State<TextFieldSuffix> with ThemeHelpers {
                     widget.textController is MentionTextEditingController
                         ? (widget.textController as MentionTextEditingController).sendableRuns
                         : const [],
+                    scheduleBlockReason: () => AttachmentActions.scheduleBlockReason(widget.controller!),
+                    // The composer's send schedules whenever a time is set, with the same checks as the Schedule button
+                    scheduleMessage: (date) async {
+                      widget.controller!.scheduledDate.value = date;
+                      await widget.sendMessage();
+                    },
                   );
                 },
               ),

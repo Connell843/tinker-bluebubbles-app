@@ -1,0 +1,166 @@
+name: Test APK
+
+# Builds an installable APK of a branch to try on a phone, as the "alpha" flavor:
+# com.bluebubbles.messaging.alpha, "BlueBubbles (Alpha)". That installs beside the real
+# app instead of over it, so testing never touches the main install or its data.
+#
+# Signed with a debug key, not the release key, so it needs no repository secrets. The
+# key is kept in the Actions cache: a fresh one each run would sign every build
+# differently, and Android refuses to update an app with a differently signed APK.
+# Caches go after 7 days unused (and a new branch can't read another branch's), so a
+# build can come out with a new key. Android then says "App not installed": uninstall
+# BlueBubbles (Alpha) and install again.
+#
+# Runs on every push to a claude/ branch, and by hand from the Actions tab. GitHub only
+# offers "Run workflow" once this file is on the default branch.
+
+on:
+  push:
+    branches:
+      - "claude/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch replaces a build still running.
+concurrency:
+  group: test-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Mirrors android-builds.yml and pr-check.yml.
+  FLUTTER_VERSION: "3.50.0"
+  FVM_VERSION: "4.3.2"
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_COMPILE_SDK: "36"
+  JAVA_VERSION: "21"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" --install \
+            "platforms;android-${ANDROID_COMPILE_SDK}" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Setup Flutter
+        uses: ./.github/actions/setup-flutter
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          fvm-version: ${{ env.FVM_VERSION }}
+
+      - name: Restore Gradle cache
+        id: cache-gradle
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-prod-${{ hashFiles('android/**/*.gradle', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-prod-
+            gradle-${{ runner.os }}-
+
+      # The debug keystore gradle signs with; see the note at the top.
+      - name: Restore debug signing key
+        id: debug-key
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.android/debug.keystore
+          key: test-apk-debug-keystore-v1
+
+      # pubspec.yaml declares .env as an asset, so it has to exist. The key it holds is
+      # desktop-only, so an empty value is fine on Android.
+      - name: Write .env
+        run: 'echo "KLIPY_API_KEY=" > .env'
+
+      # No android/key.properties, so build.gradle signs the alpha flavor with the debug key.
+      #
+      # Maven Central answers shared runners with 429 Too Many Requests at times, worst on a
+      # cold Gradle cache, and flutter's own retry comes too soon to get past it. So a failed
+      # download is retried after a wait; any other failure stops at once.
+      - name: Build APK (alpha)
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3; do
+            if fvm flutter build apk --release --flavor alpha --no-pub 2>&1 | tee build.log; then
+              exit 0
+            fi
+            if ! grep -q -e "status code 429" -e "error while downloading artifacts from the network" build.log; then
+              exit 1
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              wait=$((attempt * 120))
+              echo "::warning::Attempt $attempt failed downloading build dependencies; retrying in ${wait}s"
+              sleep "$wait"
+            fi
+          done
+          exit 1
+
+      # Unlike pr-check, which only saves master's, this keeps the branch's own copy: without
+      # it every build re-downloads everything, which is what draws the 429s above.
+      - name: Save Gradle cache
+        if: steps.cache-gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.cache-gradle.outputs.cache-primary-key }}
+
+      # Saved right after the build that created it, so later runs sign with the same key.
+      - name: Save debug signing key
+        if: steps.debug-key.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.android/debug.keystore
+          key: test-apk-debug-keystore-v1
+
+      # Flutter lower-cases the flavor in APK names, and that has moved between versions,
+      # so find the file rather than hardcoding it.
+      - name: Collect APK
+        id: collect
+        run: |
+          mapfile -t found < <(find build/app/outputs/flutter-apk -type f -name "*.apk")
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one APK, found ${#found[@]}: ${found[*]}"
+            exit 1
+          fi
+          branch="${GITHUB_REF_NAME//\//-}"
+          name="bluebubbles-alpha-${branch}-${GITHUB_SHA::7}"
+          mkdir -p out
+          cp "${found[0]}" "out/${name}.apk"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ${name}.apk"
+            echo ""
+            echo "Installs as **BlueBubbles (Alpha)**, beside the main app."
+            echo ""
+            echo "- branch: \`${GITHUB_REF_NAME}\`"
+            echo "- commit: \`${GITHUB_SHA::7}\`"
+            echo "- size: $(du -h "out/${name}.apk" | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.collect.outputs.name }}
+          path: out/${{ steps.collect.outputs.name }}.apk
+          retention-days: 14
