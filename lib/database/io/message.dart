@@ -105,6 +105,60 @@ class Message {
   /// True when this message has at least one retracted part.
   bool get hasUnsentParts => dateEdited != null && retractedParts.isNotEmpty;
 
+  /// Where [unsentContent] is kept in [metadata].
+  static const unsentContentKey = "unsentContent";
+
+  /// What this message said before it was unsent, when a copy of it was kept.
+  UnsentContent? get unsentContent => UnsentContent.fromMap(metadata?[unsentContentKey]);
+
+  /// What the given unsent part said: from [unsentContent], or, for a message unsent whole with no copy kept, the
+  /// text this device still has stored (a live update keeps it). An attachment's file isn't kept, only its name.
+  String? unsentTextForPart(int part, {required bool fullyUnsent}) {
+    final kept = unsentContent;
+    final keptText = kept?.textForPart(part);
+    if (keptText != null && keptText.trim().isNotEmpty) return keptText;
+    if (kept == null) return fullyUnsent && !isNullOrEmpty(text) ? text : null;
+    if (fullyUnsent && kept.attachmentNames.isNotEmpty) {
+      return "${kept.attachmentNames.length == 1 ? "Attachment" : "Attachments"}: ${kept.attachmentNames.join(", ")}";
+    }
+    return null;
+  }
+
+  /// The copy of unsent content to keep when [a] and [b], two copies of the same message, are combined: the
+  /// server's if either has it, then one already kept, and otherwise, when exactly one of them is unsent, the
+  /// content of the other (the copy from before the unsend). Either may be the stored one: merges are called both
+  /// ways round. Null when there's nothing to keep.
+  static Map<String, dynamic>? keptUnsentContent(Message a, Message b) {
+    Map<String, dynamic>? kept(Message m) {
+      final value = m.metadata?[unsentContentKey];
+      return value is Map ? value.cast<String, dynamic>() : null;
+    }
+
+    final aKept = kept(a), bKept = kept(b);
+    if (aKept?["fromServer"] == true) return aKept;
+    if (bKept?["fromServer"] == true) return bKept;
+    if (aKept != null || bKept != null) return aKept ?? bKept;
+
+    final aUnsent = a.retractedParts.isNotEmpty, bUnsent = b.retractedParts.isNotEmpty;
+    if (aUnsent == bUnsent) return null;
+    final before = aUnsent ? b : a;
+    final content = UnsentContent(
+      text: before.text,
+      subject: before.subject,
+      attributedBody: before.attributedBody,
+      attachmentNames: before.dbAttachments.map((e) => e.transferName).whereType<String>().toList(),
+      savedAt: DateTime.now(),
+    );
+    return content.isEmpty ? null : content.toMap();
+  }
+
+  /// Puts [keptUnsentContent] of this message and [other] in this one's [metadata]. Call it before this message
+  /// takes [other]'s text, so an unsend arriving here doesn't take the only copy of what was said with it.
+  void keepUnsentContentFrom(Message other) {
+    final kept = keptUnsentContent(this, other);
+    if (kept != null) metadata = {...?metadata, unsentContentKey: kept};
+  }
+
   @Backlink('message')
   final dbAttachments = ToMany<Attachment>();
 
@@ -253,6 +307,10 @@ class Message {
         metadata = json["metadata"]?.cast<String, dynamic>();
       }
     }
+    // The copy the server kept of an unsent message's content (BlueBubbles Server's saved copies)
+    if (json["unsentContent"] is Map) {
+      metadata[unsentContentKey] = {...(json["unsentContent"] as Map).cast<String, dynamic>(), "fromServer": true};
+    }
 
     List<MessageSummaryInfo> msi = [];
     try {
@@ -344,6 +402,8 @@ class Message {
       Message? existing = Message.findOne(guid: guid);
       if (existing != null) {
         id = existing.id;
+        // This copy replaces the stored one whole, so a kept copy of unsent content is carried over (or taken now)
+        keepUnsentContentFrom(existing);
         text ??= existing.text;
 
         // Phase 2: Preserve the handle relationship from existing message
@@ -934,6 +994,10 @@ class Message {
             existing.dateDeleted!.millisecondsSinceEpoch < newMessage.dateDeleted!.millisecondsSinceEpoch)) {
       existing.dateDeleted = newMessage.dateDeleted;
     }
+
+    // Before the edited snapshot below replaces the content: an unsend synced in would otherwise take the only copy
+    // of what the message said
+    existing.keepUnsentContentFrom(newMessage);
 
     // Sync queries can bring back an edit or unsend of a message already stored.
     // Its text may be null and its body empty, so copy the whole edited snapshot.

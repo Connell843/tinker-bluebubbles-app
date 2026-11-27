@@ -63,6 +63,8 @@ class MessageActions {
       if (existing.guid != inputNewMessage.guid) {
         existing.guid = inputNewMessage.guid;
       }
+      // Before anything of the update is taken: if it's an unsend, this keeps what the message said
+      existing.keepUnsentContentFrom(inputNewMessage);
       // Before the text and edit date: whether formatting is kept depends on whether they changed
       existing.takeOmittableFieldsFrom(inputNewMessage);
       if (inputNewMessage.text != null) {

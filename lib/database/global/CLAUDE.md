@@ -9,6 +9,7 @@ Plain Dart classes — no ObjectBox annotations. Safe to use on web. All have `f
 | `message_part.dart` | One content chunk of a multi-part message; keeps part-relative attributed runs as the source of formatting and mentions |
 | `attributed_body.dart` | Attributed text runs; retains all server formatting/effect attributes in `Attributes.rawAttributes` through JSON storage, with typed mention/attachment/transcript accessors. Bold/italic/underline/strikethrough have typed getters; effect IDs are exposed by `textEffect`; Big, Small, Shake, and Nod animate in the text renderer, with other IDs retained for future rendering. |
 | `message_summary_info.dart` | Reply/thread preview metadata |
+| `unsent_content.dart` | `UnsentContent`: what a message said before it was unsent, kept in the message's `metadata` under `Message.unsentContentKey` (the server's `unsentContent` copy, or this device's own taken when the unsend arrived; `Message.keptUnsentContent` decides, on every save/merge/replace path). Shown in the unsent event's Message Info (`chat_event.dart`); unit-tested in `test/database/unsent_content_test.dart` |
 | `chat_messages.dart` | In-memory chat ↔ message list mapping (used by `MessagesService`) |
 
 ## Server Communication

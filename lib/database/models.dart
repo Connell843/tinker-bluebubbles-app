@@ -34,6 +34,7 @@ export 'package:bluebubbles/database/global/theme_colors.dart';
 export 'package:bluebubbles/database/global/payload_data.dart';
 export 'package:bluebubbles/database/global/message_summary_info.dart';
 export 'package:bluebubbles/database/global/message_part.dart';
+export 'package:bluebubbles/database/global/unsent_content.dart';
 export 'package:bluebubbles/database/global/scheduled_message.dart';
 export 'package:bluebubbles/database/global/findmy_device.dart';
 export 'package:bluebubbles/database/global/findmy_friend.dart';

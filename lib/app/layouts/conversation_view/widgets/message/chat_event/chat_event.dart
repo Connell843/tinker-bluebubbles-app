@@ -45,23 +45,52 @@ class ChatEvent extends StatelessWidget {
                   DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateEdited"]));
             }
             String str = encoder.convert(map);
+            final unsent =
+                part.isUnsent ? message.unsentTextForPart(part.part, fullyUnsent: state.isFullyUnsent) : null;
+            final keptByServer = message.unsentContent?.fromServer ?? false;
             showBBDialog(
               context: context,
               title: "Message Info",
               content: SizedBox(
                 width: NavigationSvc.width(context) * 3 / 5,
-                height: context.height * 1 / 4,
-                child: Container(
-                  padding: const EdgeInsets.all(10.0),
-                  decoration: BoxDecoration(
-                      color: context.theme.colorScheme.surface,
-                      borderRadius: const BorderRadius.all(Radius.circular(10))),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      str,
-                      style: context.theme.textTheme.bodyLarge,
+                height: context.height * (unsent != null ? 2 / 5 : 1 / 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // What the unsent part said, ahead of the raw data, when a copy of it was kept
+                    if (unsent != null) ...[
+                      Text("Unsent message", style: context.theme.textTheme.labelLarge),
+                      const SizedBox(height: 6),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: context.height / 6),
+                        child: SingleChildScrollView(
+                          child: SelectableText(unsent, style: context.theme.textTheme.bodyLarge),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        keptByServer ? "Kept by the server" : "Kept on this device",
+                        style: context.theme.textTheme.bodySmall!
+                            .copyWith(color: context.theme.colorScheme.outline),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10.0),
+                        decoration: BoxDecoration(
+                            color: context.theme.colorScheme.surface,
+                            borderRadius: const BorderRadius.all(Radius.circular(10))),
+                        child: SingleChildScrollView(
+                          child: SelectableText(
+                            str,
+                            style: context.theme.textTheme.bodyLarge,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
               actions: [
