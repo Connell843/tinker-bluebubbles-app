@@ -299,34 +299,29 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
       if (controller.textController.sendableRuns.isNotEmpty) {
         return showSnackbar("Error", "Formatting is not allowed in scheduled messages!", type: SnackbarType.error);
       }
-      showDialog(
+      // Closed by its route rather than with Navigator.of(context).pop(): dialogs go on the root navigator, while
+      // the composer sits in the chat pane's nested one, so that pop went to the pane and left this open. Holding
+      // the route also means a dialog already dismissed with back doesn't take some other screen down with it.
+      final navigator = Navigator.of(context, rootNavigator: true);
+      final progressRoute = DialogRoute<void>(
         context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-            title: Text(
-              "Scheduling message...",
-              style: context.theme.textTheme.titleLarge,
-            ),
-            content: SizedBox(
-              height: 70,
-              child: Center(
-                child: CircularProgressIndicator(
-                  backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                  valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-                ),
-              ),
-            ),
-          );
-        },
+        themes: InheritedTheme.capture(from: context, to: navigator.context),
+        builder: (_) => const BBProgressDialog(title: "Scheduling message..."),
       );
+      unawaited(navigator.push(progressRoute));
       dio.Response? response;
       try {
         response = await HttpSvc.message.createScheduled(chat.guid, text, date.toUtc(), {"type": "once"});
       } catch (e, s) {
         Logger.error("Failed to schedule message", error: e, trace: s);
       }
-      if (mounted) Navigator.of(context).pop();
+      if (navigator.mounted) {
+        if (progressRoute.isCurrent) {
+          navigator.pop();
+        } else if (progressRoute.isActive) {
+          navigator.removeRoute(progressRoute);
+        }
+      }
       if (response?.statusCode != 200 || response?.data == null) {
         Logger.error("Scheduled message error: ${response?.statusCode}");
         if (response != null) Logger.error(response.data);
